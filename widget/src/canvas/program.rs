@@ -83,6 +83,41 @@ where
         false
     }
 
+    /// Called when the canvas gains iced-level focus (via Tab or click).
+    ///
+    /// Returns actions to emit (typically messages for the host application).
+    /// The default implementation does nothing.
+    ///
+    /// `focus_visible` indicates whether the focus indicator should be
+    /// shown. `true` when focus was gained via keyboard (Tab navigation),
+    /// `false` when gained via mouse click. This matches the
+    /// "focus-visible" pattern used by iced's built-in widgets.
+    fn on_focus_gained(
+        &self,
+        _state: &mut Self::State,
+        _focus_visible: bool,
+    ) -> Vec<Action<Message>> {
+        vec![]
+    }
+
+    /// Called when the canvas loses iced-level focus.
+    ///
+    /// Returns actions to emit (typically messages for the host application).
+    /// The default implementation does nothing.
+    fn on_focus_lost(&self, _state: &mut Self::State) -> Vec<Action<Message>> {
+        vec![]
+    }
+
+    /// Return the widget ID of the currently active child element for
+    /// accessibility. Called during `operate()` to set `active_descendant`
+    /// on the canvas's accessible node. Screen readers use this to
+    /// announce which child has focus in a composite widget.
+    ///
+    /// By default, returns `None` (no active descendant).
+    fn active_descendant_id(&self, _state: &Self::State) -> Option<widget::Id> {
+        None
+    }
+
     /// Emit accessible child nodes within the canvas.
     ///
     /// Called by the canvas widget's `operate()` method inside a
@@ -144,6 +179,22 @@ where
 
     fn is_focusable(&self, state: &Self::State) -> bool {
         T::is_focusable(self, state)
+    }
+
+    fn on_focus_gained(
+        &self,
+        state: &mut Self::State,
+        focus_visible: bool,
+    ) -> Vec<Action<Message>> {
+        T::on_focus_gained(self, state, focus_visible)
+    }
+
+    fn on_focus_lost(&self, state: &mut Self::State) -> Vec<Action<Message>> {
+        T::on_focus_lost(self, state)
+    }
+
+    fn active_descendant_id(&self, state: &Self::State) -> Option<widget::Id> {
+        T::active_descendant_id(self, state)
     }
 
     fn operate_accessible(
