@@ -216,13 +216,15 @@ pub(crate) fn synthetic_click(center: Point) -> [Event; 3] {
 /// press at `center`.
 ///
 /// Sequence: CursorMoved -> KeyPressed(key) -> KeyReleased(key).
-pub(crate) fn synthetic_arrow_key(center: Point, key: keyboard::key::Named) -> [Event; 3] {
-    [
+/// Returns `None` if the key has no known physical code mapping.
+pub(crate) fn synthetic_arrow_key(center: Point, key: keyboard::key::Named) -> Option<[Event; 3]> {
+    let code = named_to_code(key)?;
+    Some([
         Event::Mouse(mouse::Event::CursorMoved { position: center }),
         Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(key),
             modified_key: keyboard::Key::Named(key),
-            physical_key: keyboard::key::Physical::Code(named_to_code(key)),
+            physical_key: keyboard::key::Physical::Code(code),
             location: keyboard::Location::Standard,
             modifiers: keyboard::Modifiers::empty(),
             text: None,
@@ -231,11 +233,11 @@ pub(crate) fn synthetic_arrow_key(center: Point, key: keyboard::key::Named) -> [
         Event::Keyboard(keyboard::Event::KeyReleased {
             key: keyboard::Key::Named(key),
             modified_key: keyboard::Key::Named(key),
-            physical_key: keyboard::key::Physical::Code(named_to_code(key)),
+            physical_key: keyboard::key::Physical::Code(code),
             location: keyboard::Location::Standard,
             modifiers: keyboard::Modifiers::empty(),
         }),
-    ]
+    ])
 }
 
 /// Produces a synthetic CursorMoved event to `center`.
@@ -243,14 +245,13 @@ pub(crate) fn synthetic_cursor_move(center: Point) -> Event {
     Event::Mouse(mouse::Event::CursorMoved { position: center })
 }
 
-fn named_to_code(key: keyboard::key::Named) -> keyboard::key::Code {
+fn named_to_code(key: keyboard::key::Named) -> Option<keyboard::key::Code> {
     match key {
-        keyboard::key::Named::ArrowUp => keyboard::key::Code::ArrowUp,
-        keyboard::key::Named::ArrowDown => keyboard::key::Code::ArrowDown,
-        keyboard::key::Named::ArrowLeft => keyboard::key::Code::ArrowLeft,
-        keyboard::key::Named::ArrowRight => keyboard::key::Code::ArrowRight,
-        // Only arrow keys are used for synthetic AT events.
-        _ => unreachable!("synthetic_arrow_key called with non-arrow key"),
+        keyboard::key::Named::ArrowUp => Some(keyboard::key::Code::ArrowUp),
+        keyboard::key::Named::ArrowDown => Some(keyboard::key::Code::ArrowDown),
+        keyboard::key::Named::ArrowLeft => Some(keyboard::key::Code::ArrowLeft),
+        keyboard::key::Named::ArrowRight => Some(keyboard::key::Code::ArrowRight),
+        _ => None,
     }
 }
 
@@ -307,6 +308,9 @@ fn convert_role(role: IcedRole) -> Role {
         IcedRole::TabList => Role::TabList,
         IcedRole::TabPanel => Role::TabPanel,
         IcedRole::Table => Role::Table,
+        IcedRole::Row => Role::Row,
+        IcedRole::Cell => Role::Cell,
+        IcedRole::ColumnHeader => Role::ColumnHeader,
         IcedRole::TextInput => Role::TextInput,
         IcedRole::Toolbar => Role::Toolbar,
         IcedRole::Tooltip => Role::Tooltip,
@@ -729,6 +733,8 @@ impl Operation for TreeBuilder {
                 IcedHasPopup::Listbox => accesskit::HasPopup::Listbox,
                 IcedHasPopup::Menu => accesskit::HasPopup::Menu,
                 IcedHasPopup::Dialog => accesskit::HasPopup::Dialog,
+                IcedHasPopup::Tree => accesskit::HasPopup::Tree,
+                IcedHasPopup::Grid => accesskit::HasPopup::Grid,
             });
         }
         if accessible.invalid {
@@ -979,6 +985,7 @@ mod tests {
     // Run with: WAYLAND_DISPLAY=... cargo test --features a11y
     // Or use headless weston: weston --backend=headless
 
+    #[cfg(target_os = "linux")]
     /// Runs a closure inside a winit event loop with access to
     /// [`ActiveEventLoop`]. Requires a running Wayland compositor
     /// (e.g. headless weston via `WAYLAND_DISPLAY`).
@@ -1014,12 +1021,14 @@ mod tests {
         let _ = event_loop.run_app(&mut TestApp(Some(f)));
     }
 
+    #[cfg(target_os = "linux")]
     /// Returns true if a Wayland compositor is available for
     /// integration tests.
     fn has_wayland() -> bool {
         std::env::var_os("WAYLAND_DISPLAY").is_some()
     }
 
+    #[cfg(target_os = "linux")]
     /// Integration test for the full adapter lifecycle. Combined into
     /// a single test because winit only allows one event loop per
     /// process.

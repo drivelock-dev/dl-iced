@@ -93,6 +93,12 @@ pub enum Role {
     TabPanel,
     /// A data table.
     Table,
+    /// A row within a data table.
+    Row,
+    /// A cell within a table row.
+    Cell,
+    /// A column header cell within a table.
+    ColumnHeader,
     /// A text input field.
     TextInput,
     /// A toolbar container.
@@ -154,6 +160,10 @@ pub enum HasPopup {
     Menu,
     /// A dialog popup (used by modal triggers).
     Dialog,
+    /// A tree popup (used by tree-view triggers).
+    Tree,
+    /// A grid popup (used by grid-view triggers).
+    Grid,
 }
 
 /// Accessibility metadata for a single widget.

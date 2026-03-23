@@ -37,7 +37,7 @@ use crate::core::renderer;
 use crate::core::theme::palette;
 use crate::core::touch;
 use crate::core::widget::Operation;
-use crate::core::widget::operation::accessible::{Accessible, Role, Value};
+use crate::core::widget::operation::accessible::{Accessible, Orientation, Role, Value};
 use crate::core::widget::operation::focusable::Focusable;
 use crate::core::widget::tree::{self, Tree};
 use crate::core::window;
@@ -97,6 +97,7 @@ where
     on_release: Option<Message>,
     width: Length,
     height: f32,
+    label: Option<String>,
     class: Theme::Class<'a>,
     status: Option<Status>,
 }
@@ -144,6 +145,7 @@ where
             on_release: None,
             width: Length::Fill,
             height: Self::DEFAULT_HEIGHT,
+            label: None,
             class: Theme::default(),
             status: None,
         }
@@ -191,6 +193,14 @@ where
     /// If set, this value is used as the step while the shift key is pressed.
     pub fn shift_step(mut self, shift_step: impl Into<T>) -> Self {
         self.shift_step = Some(shift_step.into());
+        self
+    }
+
+    /// Sets the accessible label for the [`Slider`].
+    ///
+    /// This is announced by screen readers as the name of the slider.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.label = Some(label.into());
         self
     }
 
@@ -258,12 +268,14 @@ where
             layout.bounds(),
             &Accessible {
                 role: Role::Slider,
+                label: self.label.as_deref(),
                 value: Some(Value::Numeric {
                     current: self.value.into(),
                     min: (*self.range.start()).into(),
                     max: (*self.range.end()).into(),
                     step: Some(self.step.into()),
                 }),
+                orientation: Some(Orientation::Horizontal),
                 ..Accessible::default()
             },
         );
@@ -755,47 +767,6 @@ impl Catalog for Theme {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::core::widget::operation::focusable::Focusable;
-
-    #[test]
-    fn focusable_trait() {
-        let mut state = State::default();
-        assert!(!state.is_focused());
-        assert!(!state.focus_visible);
-        state.focus();
-        assert!(state.is_focused());
-        assert!(state.focus_visible);
-        state.unfocus();
-        assert!(!state.is_focused());
-        assert!(!state.focus_visible);
-    }
-
-    #[test]
-    fn default_state_not_focused() {
-        let state = State::default();
-        assert!(!state.is_focused);
-        assert!(!state.is_dragging);
-        assert!(!state.focus_visible);
-    }
-
-    #[test]
-    fn focus_independent_of_drag() {
-        let mut state = State::default();
-
-        state.focus();
-        assert!(!state.is_dragging);
-
-        state.is_dragging = true;
-        assert!(state.is_focused());
-
-        state.unfocus();
-        assert!(state.is_dragging);
-    }
-}
-
 /// The default style of a [`Slider`].
 pub fn default(theme: &Theme, status: Status) -> Style {
     let palette = theme.palette();
@@ -836,5 +807,46 @@ pub fn default(theme: &Theme, status: Status) -> Style {
             border_width: handle_border_width,
             shadow: handle_shadow,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::widget::operation::focusable::Focusable;
+
+    #[test]
+    fn focusable_trait() {
+        let mut state = State::default();
+        assert!(!state.is_focused());
+        assert!(!state.focus_visible);
+        state.focus();
+        assert!(state.is_focused());
+        assert!(state.focus_visible);
+        state.unfocus();
+        assert!(!state.is_focused());
+        assert!(!state.focus_visible);
+    }
+
+    #[test]
+    fn default_state_not_focused() {
+        let state = State::default();
+        assert!(!state.is_focused);
+        assert!(!state.is_dragging);
+        assert!(!state.focus_visible);
+    }
+
+    #[test]
+    fn focus_independent_of_drag() {
+        let mut state = State::default();
+
+        state.focus();
+        assert!(!state.is_dragging);
+
+        state.is_dragging = true;
+        assert!(state.is_focused());
+
+        state.unfocus();
+        assert!(state.is_dragging);
     }
 }

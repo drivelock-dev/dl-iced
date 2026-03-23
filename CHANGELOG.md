@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to toddy-iced will be documented in this file.
+All notable changes to plushie-iced will be documented in this file.
 This changelog tracks changes **specific to this fork**. For upstream
 iced changes, see the
 [iced changelog](https://github.com/iced-rs/iced/blob/master/CHANGELOG.md).
@@ -8,6 +8,33 @@ iced changes, see the
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-03-21
+
+### Added
+- Canvas `Program` trait: `is_focusable()` and `operate_accessible()` methods
+  for keyboard focus and shape-level accessibility
+- `decorative()` builder on `Image` and `Svg` (hides from assistive technology)
+- Accessible labels on `Button`, `ProgressBar`, `Slider`, `VerticalSlider`
+- `alt`/`description` support on `QRCode`, `Canvas`, and `Shader`
+- Tooltip-role accessible node emitted for tooltip text
+- `Row`, `Cell`, `ColumnHeader` variants in accessible `Role` enum for table
+  semantics
+- Slider and VerticalSlider orientation set on accessible nodes
+
+### Fixed
+- Canvas keyboard events now gated on focus (mouse events unaffected)
+- Focus contrast thresholds raised to meet WCAG AA SC 1.4.11
+  (`focus_color` 2.0 -> 3.0, `focus_border_color` 1.5 -> 3.0)
+- `named_to_code` returns `Option` instead of panicking on non-arrow keys
+- Modifier state reset on window unfocus (prevents stuck keys)
+- `InputMethod` state applied from non-redraw event processing
+
+### Changed
+- **Breaking:** Canvas `Program` now gates keyboard events on focus -- programs
+  that handle keyboard input must return `true` from `is_focusable()` to
+  continue receiving keyboard events
+- **Breaking:** All crates renamed from `toddy-iced-*` to `plushie-iced-*`
 
 ## [0.6.2] - 2026-03-19
 
@@ -19,7 +46,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   correctly representing the case where no widget has focus
 
 ### Changed
-- **Breaking:** All crates renamed from `julep-iced-*` to `toddy-iced-*`
+- **Breaking:** All crates renamed from `julep-iced-*` to `plushie-iced-*`
 - **Breaking:** `find_focused` return type changed from `Task<Id>` to
   `Task<Option<Id>>`
 
@@ -100,7 +127,7 @@ Based on [iced 0.14.0](https://github.com/iced-rs/iced/blob/master/CHANGELOG.md#
   hardcoded values
 
 ### Changed
-- All crates renamed to `toddy-iced-*` for crates.io publishing
+- All crates renamed to `plushie-iced-*` for crates.io publishing
 - Switched from iced-rs winit fork to upstream winit
 
 ### Removed

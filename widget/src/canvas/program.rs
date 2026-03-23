@@ -2,6 +2,7 @@ use crate::Action;
 use crate::canvas::mouse;
 use crate::canvas::{Event, Geometry};
 use crate::core::Rectangle;
+use crate::core::widget;
 use crate::graphics::geometry;
 
 /// The state and logic of a [`Canvas`].
@@ -70,6 +71,38 @@ where
     ) -> mouse::Interaction {
         mouse::Interaction::default()
     }
+
+    /// Whether the canvas should participate in iced's focus system.
+    ///
+    /// When true, the canvas becomes a Tab stop and keyboard events
+    /// are delivered to [`update`](Self::update). The canvas widget
+    /// manages focus state internally.
+    ///
+    /// By default, returns false (canvas is not focusable).
+    fn is_focusable(&self, _state: &Self::State) -> bool {
+        false
+    }
+
+    /// Emit accessible child nodes within the canvas.
+    ///
+    /// Called by the canvas widget's `operate()` method inside a
+    /// `traverse()` block. The Program calls `operation.accessible()`
+    /// directly with full [`Accessible`] structs -- no intermediate
+    /// type or capability gap.
+    ///
+    /// For nested groups, recurse: emit the group's accessible node,
+    /// then call `operation.traverse()` for the group's children.
+    ///
+    /// By default, does nothing (no accessible children).
+    ///
+    /// [`Accessible`]: crate::core::widget::operation::accessible::Accessible
+    fn operate_accessible(
+        &self,
+        _state: &Self::State,
+        _canvas_bounds: Rectangle,
+        _operation: &mut dyn widget::Operation,
+    ) {
+    }
 }
 
 impl<Message, Theme, Renderer, T> Program<Message, Theme, Renderer> for &T
@@ -107,5 +140,18 @@ where
         cursor: mouse::Cursor,
     ) -> mouse::Interaction {
         T::mouse_interaction(self, state, bounds, cursor)
+    }
+
+    fn is_focusable(&self, state: &Self::State) -> bool {
+        T::is_focusable(self, state)
+    }
+
+    fn operate_accessible(
+        &self,
+        state: &Self::State,
+        canvas_bounds: Rectangle,
+        operation: &mut dyn widget::Operation,
+    ) {
+        T::operate_accessible(self, state, canvas_bounds, operation);
     }
 }
