@@ -845,8 +845,9 @@ where
                         }
                     }
 
-                    shell.capture_event();
-
+                    if !matches!(binding, Binding::Unfocus) {
+                        shell.capture_event();
+                    }
                     apply_binding(binding, self.content, state, on_edit, shell);
 
                     if let Some(focus) = &mut state.focus {
