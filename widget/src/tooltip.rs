@@ -275,6 +275,24 @@ where
             shell,
             viewport,
         );
+
+        // After the child processes the event, check whether focus changed.
+        // This ensures the tooltip is shown/hidden when keyboard focus
+        // enters or leaves the child widget (e.g. via Tab).
+        let mut focus_check = FocusCheck(false);
+        self.content.as_widget_mut().operate(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            &mut focus_check,
+        );
+
+        let state = tree.state.downcast_mut::<State>();
+        if state.child_focused != focus_check.0 {
+            state.child_focused = focus_check.0;
+            shell.invalidate_layout();
+            shell.request_redraw();
+        }
     }
 
     fn mouse_interaction(
