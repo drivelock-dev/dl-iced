@@ -431,6 +431,26 @@ where
 
     #[cfg(not(target_arch = "wasm32"))]
     {
+        // On macOS, disable the automatic "Customize Touch Bar..." menu item.
+        // This prevents AppKit's _NSTouchBarFinderObservation from setting up
+        // KVO observers that can crash (SIGABRT) during cleanup when the
+        // observed object is deallocated before the observer is removed.
+        #[cfg(target_os = "macos")]
+        {
+            use objc2::rc::Retained;
+            use objc2::runtime::NSObject;
+            use objc2::{class, msg_send, msg_send_id, sel};
+
+            unsafe {
+                let app: Retained<NSObject> =
+                    msg_send_id![class!(NSApplication), sharedApplication];
+                let _: () = msg_send![
+                    &app,
+                    setAutomaticCustomizeTouchBarMenuItemEnabled: false
+                ];
+            }
+        }
+
         let mut runner = runner;
         let _ = event_loop.run_app(&mut runner);
 
