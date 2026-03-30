@@ -142,7 +142,76 @@ where
         let window = self.entries.remove(&id)?;
         let _ = self.aliases.remove(&window.raw.id());
 
+        #[cfg(target_os = "macos")]
+        prepare_close_macos(&window.raw);
+
         Some(window)
+    }
+}
+
+/// Prepare an `NSWindow` for teardown by ordering it out and flushing
+/// pending `CATransaction` work.
+///
+/// AppKit's `_NSTouchBarFinderObservation` registers a KVO observer on
+/// each window. When a window is deallocated the observer becomes stale;
+/// on the next display-cycle flush (`NSDisplayCycleFlush`) AppKit tries
+/// to `-invalidate` it by calling `-removeObserver:forKeyPath:context:`
+/// on the now-dead window, which throws an uncaught `NSException` and
+/// crashes the process.
+///
+/// By ordering the window out **and** flushing the `CATransaction` while
+/// the window is still alive we force AppKit to process (and clean up)
+/// the stale observation synchronously, before the window is freed.
+#[cfg(target_os = "macos")]
+fn prepare_close_macos(window: &winit::window::Window) {
+    use raw_window_handle::HasWindowHandle;
+
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+
+    let raw_window_handle::RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+
+    unsafe {
+        use objc2::msg_send;
+        use objc2::runtime::{AnyClass, NSObject};
+        use std::ptr;
+
+        let ns_view = handle.ns_view.as_ptr() as *const NSObject;
+        let ns_window: *const NSObject = msg_send![ns_view, window];
+        if ns_window.is_null() {
+            return;
+        }
+
+        // Remove the window from screen. This updates AppKit's internal
+        // responder-chain and touch-bar tracking state.
+        let _: () = msg_send![ns_window, orderOut: ptr::null::<NSObject>()];
+
+        // Flush the current CATransaction so that any pending
+        // display-cycle observers (including _NSTouchBarFinderObservation
+        // invalidation) run NOW, while the window is still alive.
+        let ca_transaction: &AnyClass =
+            AnyClass::get("CATransaction").expect("CATransaction class");
+        let _: () = msg_send![ca_transaction, flush];
+    }
+}
+
+impl<P, C> Drop for WindowManager<P, C>
+where
+    P: Program,
+    C: Compositor<Renderer = P::Renderer>,
+    P::Theme: theme::Base,
+{
+    fn drop(&mut self) {
+        // On macOS, prepare every still-open window for teardown so that
+        // AppKit's internal touch-bar observations are cleaned up before
+        // the windows are deallocated.
+        #[cfg(target_os = "macos")]
+        for window in self.entries.values() {
+            prepare_close_macos(&window.raw);
+        }
     }
 }
 
