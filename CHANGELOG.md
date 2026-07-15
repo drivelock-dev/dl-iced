@@ -9,6 +9,82 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-05-08
+
+### Added
+
+- `Role::GenericContainer` for layout wrappers with no AT-semantic meaning
+  (unlike `Group`, which implies a grouping relationship). Maps to
+  `accesskit::Role::GenericContainer`.
+- `input_method::Purpose` variants: `Number`, `Decimal`, `Phone`, `Email`,
+  `Url`, `Search` for fine-grained IME keyboard hints (fall back to
+  `winit::ImePurpose::Normal` until winit exposes matching variants).
+- `on_status_change` callback on all widgets that compute a `Status` type:
+  button, checkbox, pick_list, radio, scrollable, slider, svg, text_editor,
+  text_input, toggler, vertical_slider. The callback fires when the status
+  name changes (e.g. `"active"` -> `"hovered"`). Canonical status name
+  strings: `"active"`, `"hovered"`, `"focused"`, `"pressed"`, `"dragged"`,
+  `"disabled"`, `"opened"`. The `svg` widget gains a `Message` type
+  parameter to support the callback closure.
+- Tooltip: `described_by` a11y relationship -- screen readers now associate
+  tooltip text with the content widget.
+- `runtime::announce_polite` helper; `Task<_>` announcements now carry a
+  polite/assertive hint through to AccessKit unchanged (previously all
+  announcements collapsed to `Live::Assertive`).
+- `accesskit` re-exported from the `a11y` module for stable access to enum
+  values (e.g. `Live`).
+- A11y: `focus_peer_in_list` operation for radio-group arrow navigation.
+  Moves focus to the next/previous peer relative to the currently focused
+  widget; skips unmounted or disabled peers and wraps at both ends.
+- A11y: Arrow-key radio peer cycling wired into the winit event loop and
+  the test `Simulator` (WAI-ARIA radio pattern). Widgets declare peers via
+  `a11y.radio_group`; ArrowDown/ArrowRight advance, ArrowUp/ArrowLeft
+  retreat, modifier+arrow falls through to downstream handlers.
+
+### Fixed
+
+- **Breaking:** Rename `Wrapping::align_x` to `align_y` (was incorrectly
+  setting vertical alignment).
+- Harden unicode text editing to handle edge cases in text mutation.
+
+## [0.8.3] - 2026-04-02
+
+### Fixed
+
+- Remove remaining `debug_assertions` gates from null renderer impls
+  in graphics cache and compositor modules. The 0.8.2 release missed
+  these, causing release builds to fail.
+
+## [0.8.2] - 2026-04-02
+
+### Changed
+
+- Remove `debug_assertions` gate from null renderer (`()`) trait
+  impls. Mock mode now works in release builds, which is required
+  for precompiled binary downloads used in test suites.
+
+## [0.8.1] - 2026-04-02
+
+### Changed
+
+- **Breaking:** `mouse_area`: All event callbacks changed from
+  `Option<Message>` to `Option<Box<dyn Fn(Point) -> Message>>`.
+  Callers must wrap messages in closures: `.on_press(Message::Click)`
+  becomes `.on_press(|_| Message::Click)`. `on_scroll` changed from
+  `Fn(ScrollDelta) -> Message` to `Fn(ScrollDelta, Point) -> Message`.
+  Both changes provide cursor position relative to the area bounds,
+  enabling the renderer to include coordinates on all pointer events.
+
+### Merged from upstream (iced-rs/iced)
+
+- Fix `pane_grid` drawing picked pane twice
+- Fix RTL relayout being skipped for single-line text
+- Use `Overlay` to draw picked pane in `pane_grid`
+- Make `Oklch` type public
+- Fix `objc2` panic on macOS Tahoe
+- Add scale factor to window opened event
+- Add `finish` and `recall` methods to `iced_wgpu::Renderer`
+
 ## [0.8.0] - 2026-03-23
 
 ### Added

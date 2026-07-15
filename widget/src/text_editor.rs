@@ -117,6 +117,7 @@ where
     class: Theme::Class<'a>,
     key_binding: Option<Box<dyn Fn(KeyPress) -> Option<Binding<Message>> + 'a>>,
     on_edit: Option<Box<dyn Fn(Action) -> Message + 'a>>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     purpose: Option<input_method::Purpose>,
     highlighter_settings: Highlighter::Settings,
     highlighter_format: fn(&Highlighter::Highlight, &Theme) -> highlighter::Format<Renderer::Font>,
@@ -146,6 +147,7 @@ where
             class: <Theme as Catalog>::default(),
             key_binding: None,
             on_edit: None,
+            on_status_change: None,
             purpose: None,
             highlighter_settings: (),
             highlighter_format: |_highlight, _theme| highlighter::Format::default(),
@@ -203,6 +205,15 @@ where
     /// If this method is not called, the [`TextEditor`] will be disabled.
     pub fn on_action(mut self, on_edit: impl Fn(Action) -> Message + 'a) -> Self {
         self.on_edit = Some(Box::new(on_edit));
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "focused", "disabled").
+    pub fn on_status_change(mut self, f: impl Fn(&str) -> Message + 'a) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 
@@ -280,6 +291,7 @@ where
             class: self.class,
             key_binding: self.key_binding,
             on_edit: self.on_edit,
+            on_status_change: self.on_status_change,
             purpose: self.purpose,
             highlighter_settings: settings,
             highlighter_format: to_format,
@@ -872,16 +884,24 @@ where
             }
         };
 
-        if is_redraw {
-            self.last_status = Some(status);
+        let new_name = status_name(status);
+        let old_name = self.last_status.map(status_name);
+        if old_name != Some(new_name)
+            && let Some(ref on_status_change) = self.on_status_change
+        {
+            shell.publish(on_status_change(new_name));
+        }
 
+        if is_redraw {
             shell.request_input_method(&self.input_method(state, renderer, layout));
-        } else if self
-            .last_status
-            .is_some_and(|last_status| status != last_status)
+        }
+
+        if (self.last_status.is_some_and(|s| s != status) || self.last_status.is_none())
+            && !is_redraw
         {
             shell.request_redraw();
         }
+        self.last_status = Some(status);
     }
 
     fn draw(
@@ -1374,6 +1394,15 @@ pub enum Status {
     },
     /// The [`TextEditor`] cannot be interacted with.
     Disabled,
+}
+
+fn status_name(status: Status) -> &'static str {
+    match status {
+        Status::Active => "active",
+        Status::Hovered => "hovered",
+        Status::Focused { .. } => "focused",
+        Status::Disabled => "disabled",
+    }
 }
 
 /// The appearance of a text input.

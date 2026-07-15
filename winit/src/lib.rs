@@ -41,12 +41,14 @@ pub use clipboard::Clipboard;
 pub use error::Error;
 pub use proxy::Proxy;
 
+#[cfg(feature = "hinting")]
+use crate::core::Renderer;
 use crate::core::mouse;
 use crate::core::renderer;
 use crate::core::theme;
 use crate::core::time::Instant;
 use crate::core::widget::operation;
-use crate::core::{Point, Renderer, Size};
+use crate::core::{Point, Size};
 use crate::futures::futures::channel::mpsc;
 use crate::futures::futures::channel::oneshot;
 use crate::futures::futures::task;
@@ -65,6 +67,7 @@ use window::WindowManager;
 
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::mem::ManuallyDrop;
 use std::slice;
 use std::sync::Arc;
@@ -149,7 +152,7 @@ where
     let context = task::Context::from_waker(task::noop_waker_ref());
 
     struct Runner<Message: 'static, F> {
-        instance: std::pin::Pin<Box<F>>,
+        instance: Option<std::pin::Pin<Box<F>>>,
         context: task::Context<'static>,
         id: Option<String>,
         sender: mpsc::UnboundedSender<Event<Action<Message>>>,
@@ -162,7 +165,7 @@ where
     }
 
     let runner = Runner {
-        instance,
+        instance: Some(instance),
         context,
         id: settings.id,
         sender: event_sender,
@@ -266,10 +269,19 @@ where
                 return;
             }
 
-            self.sender.start_send(event).expect("Send event");
+            let mut pending = VecDeque::from([event]);
 
             loop {
-                let poll = self.instance.as_mut().poll(&mut self.context);
+                while let Some(event) = pending.pop_front() {
+                    self.sender.start_send(event).expect("Send event");
+                }
+
+                let Some(instance) = self.instance.as_mut() else {
+                    event_loop.exit();
+                    break;
+                };
+
+                let poll = instance.as_mut().poll(&mut self.context);
 
                 match poll {
                     task::Poll::Pending => match self.receiver.try_recv() {
@@ -386,27 +398,23 @@ where
                                     &title,
                                 ));
 
-                                self.process_event(
-                                    event_loop,
-                                    Event::WindowCreated {
-                                        id,
-                                        window,
-                                        exit_on_close_request,
-                                        make_visible: visible,
-                                        on_open,
-                                        #[cfg(feature = "a11y")]
-                                        adapter,
-                                    },
-                                );
+                                pending.push_back(Event::WindowCreated {
+                                    id,
+                                    window,
+                                    exit_on_close_request,
+                                    make_visible: visible,
+                                    on_open,
+                                    #[cfg(feature = "a11y")]
+                                    adapter,
+                                });
                             }
                             Control::Exit => {
-                                self.process_event(event_loop, Event::Exit);
-                                event_loop.exit();
-                                break;
+                                pending.push_back(Event::Exit);
                             }
                             Control::Crash(error) => {
                                 self.error = Some(error);
                                 event_loop.exit();
+                                break;
                             }
                             Control::SetAutomaticWindowTabbing(_enabled) => {
                                 #[cfg(target_os = "macos")]
@@ -421,6 +429,7 @@ where
                         }
                     },
                     task::Poll::Ready(_) => {
+                        self.instance = None;
                         event_loop.exit();
                         break;
                     }
@@ -522,7 +531,10 @@ async fn run_instance<P>(
     let mut user_interfaces = ManuallyDrop::new(FxHashMap::default());
     let mut clipboard = Clipboard::new();
 
-    let mut pending_announcements: Vec<String> = Vec::new();
+    // Each announcement carries (text, is_assertive). Politeness is
+    // lifted to the AccessKit Live value at tree-build time via the
+    // a11y helper.
+    let mut pending_announcements: Vec<(String, bool)> = Vec::new();
     #[cfg(feature = "a11y")]
     let mut a11y_tree_dirty = true;
 
@@ -1259,9 +1271,7 @@ async fn run_instance<P>(
                                 }
                             }
 
-                            for (event, status) in
-                                window_events.into_iter().zip(statuses.into_iter())
-                            {
+                            for (event, status) in window_events.into_iter().zip(statuses) {
                                 {
                                     let ui =
                                         user_interfaces.get_mut(&id).expect("Get user interface");
@@ -1297,6 +1307,12 @@ async fn run_instance<P>(
                                         ui,
                                         &window.renderer,
                                     ) || tab_handled
+                                        || runtime::keyboard::handle_radio_arrow(
+                                            &event,
+                                            status,
+                                            ui,
+                                            &window.renderer,
+                                        )
                                         || runtime::keyboard::handle_scroll_keys(
                                             &event,
                                             status,
@@ -1405,6 +1421,20 @@ async fn run_instance<P>(
                         #[cfg(feature = "a11y")]
                         if a11y_tree_dirty {
                             let mut a11y_had_active = false;
+                            // Lift (text, assertive_bool) to (text, Live) so the
+                            // fork preserves the politeness hint the SDK sent.
+                            let announcements: Vec<(String, a11y::accesskit::Live)> =
+                                pending_announcements
+                                    .iter()
+                                    .map(|(text, assertive)| {
+                                        let live = if *assertive {
+                                            a11y::accesskit::Live::Assertive
+                                        } else {
+                                            a11y::accesskit::Live::Polite
+                                        };
+                                        (text.clone(), live)
+                                    })
+                                    .collect();
                             for (id, ui) in user_interfaces.iter_mut() {
                                 if let Some(window) = window_manager.get_mut(*id)
                                     && let Some(ref mut adapter) = window.adapter
@@ -1412,7 +1442,7 @@ async fn run_instance<P>(
                                 {
                                     a11y_had_active = true;
                                     let mut builder = a11y::TreeBuilder::new(window.state.title())
-                                        .with_announcements(&pending_announcements);
+                                        .with_announcements(&announcements);
                                     ui.operate(&window.renderer, &mut builder);
                                     let tree = builder.build();
                                     window.a11y_node_map = tree.node_map;
@@ -1534,7 +1564,7 @@ fn run_action<'a, P, C>(
     is_window_opening: &mut bool,
     system_theme: &mut theme::Mode,
     renderer_settings: &mut renderer::Settings,
-    pending_announcements: &mut Vec<String>,
+    pending_announcements: &mut Vec<(String, bool)>,
 ) where
     P: Program,
     C: Compositor<Renderer = P::Renderer> + 'static,
@@ -1983,8 +2013,8 @@ fn run_action<'a, P, C>(
                 window.raw.request_redraw();
             }
         }
-        Action::Announce(text) => {
-            pending_announcements.push(text);
+        Action::Announce(text, assertive) => {
+            pending_announcements.push((text, assertive));
         }
         Action::Exit => {
             control_sender

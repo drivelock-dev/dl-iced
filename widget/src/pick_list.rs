@@ -174,6 +174,7 @@ where
     handle: Handle<Renderer::Font>,
     class: <Theme as Catalog>::Class<'a>,
     menu_class: <Theme as menu::Catalog>::Class<'a>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     last_status: Option<Status>,
     menu_height: Length,
 }
@@ -208,6 +209,7 @@ where
             handle: Handle::default(),
             class: <Theme as Catalog>::default(),
             menu_class: <Theme as Catalog>::default_menu(),
+            on_status_change: None,
             last_status: None,
             menu_height: Length::Shrink,
         }
@@ -324,6 +326,15 @@ where
     #[must_use]
     pub fn menu_class(mut self, class: impl Into<<Theme as menu::Catalog>::Class<'a>>) -> Self {
         self.menu_class = class.into();
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "opened", "focused", "disabled").
+    pub fn on_status_change(mut self, f: impl Fn(&str) -> Message + 'a) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 }
@@ -566,79 +577,77 @@ where
             Event::Keyboard(keyboard::Event::KeyPressed {
                 key: keyboard::Key::Named(named),
                 ..
-            }) => {
-                if self.on_select.is_some() && state.is_focused {
-                    if state.is_open {
-                        match named {
-                            key::Named::ArrowDown => {
-                                let options = self.options.borrow();
-                                state.hovered_option = match state.hovered_option {
-                                    Some(i) if i + 1 < options.len() => Some(i + 1),
-                                    _ => Some(0),
-                                };
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            key::Named::ArrowUp => {
-                                let options = self.options.borrow();
-                                state.hovered_option = match state.hovered_option {
-                                    Some(0) | None => Some(options.len().saturating_sub(1)),
-                                    Some(i) => Some(i - 1),
-                                };
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            key::Named::Enter | key::Named::Space => {
-                                if let Some(on_select) = &self.on_select
-                                    && let Some(index) = state.hovered_option
-                                {
-                                    let options = self.options.borrow();
-                                    if let Some(option) = options.get(index) {
-                                        shell.publish(on_select(option.clone()));
-                                    }
-                                }
-                                state.is_open = false;
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            key::Named::Escape => {
-                                state.is_open = false;
-                                shell.capture_event();
-                                shell.request_redraw();
-                            }
-                            key::Named::Tab => {
-                                state.is_open = false;
-                            }
-                            _ => {}
+            }) if self.on_select.is_some() && state.is_focused => {
+                if state.is_open {
+                    match named {
+                        key::Named::ArrowDown => {
+                            let options = self.options.borrow();
+                            state.hovered_option = match state.hovered_option {
+                                Some(i) if i + 1 < options.len() => Some(i + 1),
+                                _ => Some(0),
+                            };
+                            shell.capture_event();
+                            shell.request_redraw();
                         }
-                    } else {
-                        match named {
-                            key::Named::Space
-                            | key::Named::Enter
-                            | key::Named::ArrowDown
-                            | key::Named::ArrowUp => {
-                                let selected = self.selected.as_ref().map(Borrow::borrow);
-
-                                state.is_open = true;
-                                state.hovered_option = self
-                                    .options
-                                    .borrow()
-                                    .iter()
-                                    .position(|option| Some(option) == selected);
-
-                                if let Some(on_open) = &self.on_open {
-                                    shell.publish(on_open.clone());
-                                }
-
-                                shell.capture_event();
-                            }
-                            key::Named::Escape => {
-                                state.is_focused = false;
-                                state.focus_visible = false;
-                                shell.capture_event();
-                            }
-                            _ => {}
+                        key::Named::ArrowUp => {
+                            let options = self.options.borrow();
+                            state.hovered_option = match state.hovered_option {
+                                Some(0) | None => Some(options.len().saturating_sub(1)),
+                                Some(i) => Some(i - 1),
+                            };
+                            shell.capture_event();
+                            shell.request_redraw();
                         }
+                        key::Named::Enter | key::Named::Space => {
+                            if let Some(on_select) = &self.on_select
+                                && let Some(index) = state.hovered_option
+                            {
+                                let options = self.options.borrow();
+                                if let Some(option) = options.get(index) {
+                                    shell.publish(on_select(option.clone()));
+                                }
+                            }
+                            state.is_open = false;
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                        key::Named::Escape => {
+                            state.is_open = false;
+                            shell.capture_event();
+                            shell.request_redraw();
+                        }
+                        key::Named::Tab => {
+                            state.is_open = false;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match named {
+                        key::Named::Space
+                        | key::Named::Enter
+                        | key::Named::ArrowDown
+                        | key::Named::ArrowUp => {
+                            let selected = self.selected.as_ref().map(Borrow::borrow);
+
+                            state.is_open = true;
+                            state.hovered_option = self
+                                .options
+                                .borrow()
+                                .iter()
+                                .position(|option| Some(option) == selected);
+
+                            if let Some(on_open) = &self.on_open {
+                                shell.publish(on_open.clone());
+                            }
+
+                            shell.capture_event();
+                        }
+                        key::Named::Escape => {
+                            state.is_focused = false;
+                            state.focus_visible = false;
+                            shell.capture_event();
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -664,14 +673,20 @@ where
             }
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.last_status = Some(status);
-        } else if self
-            .last_status
-            .is_some_and(|last_status| last_status != status)
+        let new_name = status_name(status);
+        let old_name = self.last_status.map(status_name);
+        if old_name != Some(new_name)
+            && let Some(ref on_status_change) = self.on_status_change
+        {
+            shell.publish(on_status_change(new_name));
+        }
+
+        if (self.last_status.is_some_and(|s| s != status) || self.last_status.is_none())
+            && !matches!(event, Event::Window(window::Event::RedrawRequested(_)))
         {
             shell.request_redraw();
         }
+        self.last_status = Some(status);
     }
 
     fn mouse_interaction(
@@ -1002,6 +1017,16 @@ pub enum Status {
     Focused,
     /// The [`PickList`] is disabled.
     Disabled,
+}
+
+fn status_name(status: Status) -> &'static str {
+    match status {
+        Status::Active => "active",
+        Status::Hovered => "hovered",
+        Status::Opened { .. } => "opened",
+        Status::Focused => "focused",
+        Status::Disabled => "disabled",
+    }
 }
 
 /// The appearance of a pick list.

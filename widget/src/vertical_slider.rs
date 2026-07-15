@@ -100,6 +100,7 @@ where
     width: f32,
     height: Length,
     label: Option<String>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     class: Theme::Class<'a>,
     status: Option<Status>,
 }
@@ -148,6 +149,7 @@ where
             width: Self::DEFAULT_WIDTH,
             height: Length::Fill,
             label: None,
+            on_status_change: None,
             class: Theme::default(),
             status: None,
         }
@@ -203,6 +205,15 @@ where
     /// This is announced by screen readers as the name of the slider.
     pub fn label(mut self, label: impl Into<String>) -> Self {
         self.label = Some(label.into());
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "dragged", "focused").
+    pub fn on_status_change(mut self, f: impl Fn(&str) -> Message + 'a) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 
@@ -303,6 +314,11 @@ where
                     step: Some(self.step.into()),
                 }),
                 orientation: Some(Orientation::Vertical),
+                // Set aria-busy during drag so assistive technology
+                // suppresses rapid value announcements and announces
+                // only the final value on release. See WAI-ARIA
+                // aria-busy specification.
+                busy: state.is_dragging,
                 ..Accessible::default()
             },
         );
@@ -441,76 +457,72 @@ where
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. })
-            | Event::Touch(touch::Event::FingerLost { .. }) => {
-                if is_dragging {
-                    if let Some(on_release) = self.on_release.clone() {
-                        shell.publish(on_release);
-                    }
-                    state.is_dragging = false;
+            | Event::Touch(touch::Event::FingerLost { .. })
+                if is_dragging =>
+            {
+                if let Some(on_release) = self.on_release.clone() {
+                    shell.publish(on_release);
                 }
+                state.is_dragging = false;
             }
             Event::Mouse(mouse::Event::CursorMoved { .. })
-            | Event::Touch(touch::Event::FingerMoved { .. }) => {
-                if is_dragging {
-                    let _ = cursor.land().position().and_then(locate).map(change);
+            | Event::Touch(touch::Event::FingerMoved { .. })
+                if is_dragging =>
+            {
+                let _ = cursor.land().position().and_then(locate).map(change);
 
-                    shell.capture_event();
-                }
+                shell.capture_event();
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta })
-                if state.keyboard_modifiers.control() =>
+                if state.keyboard_modifiers.control() && cursor.is_over(layout.bounds()) =>
             {
-                if cursor.is_over(layout.bounds()) {
-                    let delta = match *delta {
-                        mouse::ScrollDelta::Lines { x: _, y } => y,
-                        mouse::ScrollDelta::Pixels { x: _, y } => y,
-                    };
+                let delta = match *delta {
+                    mouse::ScrollDelta::Lines { x: _, y } => y,
+                    mouse::ScrollDelta::Pixels { x: _, y } => y,
+                };
 
-                    if delta < 0.0 {
-                        let _ = decrement(current_value).map(change);
-                    } else {
-                        let _ = increment(current_value).map(change);
-                    }
-
-                    shell.capture_event();
+                if delta < 0.0 {
+                    let _ = decrement(current_value).map(change);
+                } else {
+                    let _ = increment(current_value).map(change);
                 }
+
+                shell.capture_event();
             }
-            Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
-                if cursor.is_over(layout.bounds()) || state.is_focused {
-                    match key {
-                        Key::Named(key::Named::ArrowUp | key::Named::ArrowRight) => {
-                            let _ = increment(current_value).map(change);
-                            shell.capture_event();
-                        }
-                        Key::Named(key::Named::ArrowDown | key::Named::ArrowLeft) => {
-                            let _ = decrement(current_value).map(change);
-                            shell.capture_event();
-                        }
-                        Key::Named(key::Named::PageUp) => {
-                            let _ = page_increment(current_value).map(change);
-                            shell.capture_event();
-                        }
-                        Key::Named(key::Named::PageDown) => {
-                            let _ = page_decrement(current_value).map(change);
-                            shell.capture_event();
-                        }
-                        Key::Named(key::Named::Home) => {
-                            change(*self.range.start());
-                            shell.capture_event();
-                        }
-                        Key::Named(key::Named::End) => {
-                            change(*self.range.end());
-                            shell.capture_event();
-                        }
-                        Key::Named(key::Named::Escape) => {
-                            if state.is_focused {
-                                state.is_focused = false;
-                                state.focus_visible = false;
-                                shell.capture_event();
-                            }
-                        }
-                        _ => (),
+            Event::Keyboard(keyboard::Event::KeyPressed { key, .. })
+                if cursor.is_over(layout.bounds()) || state.is_focused =>
+            {
+                match key {
+                    Key::Named(key::Named::ArrowUp | key::Named::ArrowRight) => {
+                        let _ = increment(current_value).map(change);
+                        shell.capture_event();
                     }
+                    Key::Named(key::Named::ArrowDown | key::Named::ArrowLeft) => {
+                        let _ = decrement(current_value).map(change);
+                        shell.capture_event();
+                    }
+                    Key::Named(key::Named::PageUp) => {
+                        let _ = page_increment(current_value).map(change);
+                        shell.capture_event();
+                    }
+                    Key::Named(key::Named::PageDown) => {
+                        let _ = page_decrement(current_value).map(change);
+                        shell.capture_event();
+                    }
+                    Key::Named(key::Named::Home) => {
+                        change(*self.range.start());
+                        shell.capture_event();
+                    }
+                    Key::Named(key::Named::End) => {
+                        change(*self.range.end());
+                        shell.capture_event();
+                    }
+                    Key::Named(key::Named::Escape) if state.is_focused => {
+                        state.is_focused = false;
+                        state.focus_visible = false;
+                        shell.capture_event();
+                    }
+                    _ => (),
                 }
             }
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
@@ -529,11 +541,20 @@ where
             Status::Active
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.status = Some(current_status);
-        } else if self.status.is_some_and(|status| status != current_status) {
+        let new_name = status_name(current_status);
+        let old_name = self.status.map(status_name);
+        if old_name != Some(new_name)
+            && let Some(ref on_status_change) = self.on_status_change
+        {
+            shell.publish(on_status_change(new_name));
+        }
+
+        if (self.status.is_some_and(|s| s != current_status) || self.status.is_none())
+            && !matches!(event, Event::Window(window::Event::RedrawRequested(_)))
+        {
             shell.request_redraw();
         }
+        self.status = Some(current_status);
     }
 
     fn draw(
@@ -677,6 +698,15 @@ pub enum Status {
     Dragged,
     /// The [`VerticalSlider`] has keyboard focus.
     Focused,
+}
+
+fn status_name(status: Status) -> &'static str {
+    match status {
+        Status::Active => "active",
+        Status::Hovered => "hovered",
+        Status::Dragged => "dragged",
+        Status::Focused => "focused",
+    }
 }
 
 /// The theme catalog of a [`VerticalSlider`].

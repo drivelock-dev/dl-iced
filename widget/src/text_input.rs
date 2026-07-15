@@ -114,6 +114,7 @@ where
     on_input: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_paste: Option<Box<dyn Fn(String) -> Message + 'a>>,
     on_submit: Option<Message>,
+    on_status_change: Option<Box<dyn Fn(&str) -> Message + 'a>>,
     icon: Option<Icon<Renderer::Font>>,
     class: Theme::Class<'a>,
     last_status: Option<Status>,
@@ -146,6 +147,7 @@ where
             on_input: None,
             on_paste: None,
             on_submit: None,
+            on_status_change: None,
             icon: None,
             class: Theme::default(),
             last_status: None,
@@ -201,6 +203,15 @@ where
     /// focused and the enter key is pressed, if `Some`.
     pub fn on_submit_maybe(mut self, on_submit: Option<Message>) -> Self {
         self.on_submit = on_submit;
+        self
+    }
+
+    /// Sets the callback for status change notifications.
+    ///
+    /// The callback receives the new status name as a string
+    /// (e.g. "active", "hovered", "focused", "disabled").
+    pub fn on_status_change(mut self, f: impl Fn(&str) -> Message + 'a) -> Self {
+        self.on_status_change = Some(Box::new(f));
         self
     }
 
@@ -965,10 +976,12 @@ where
 
                         state.is_pasting = None;
 
-                        if let Some(c) = text.chars().next().filter(|c| !c.is_control()) {
+                        let text = text.chars().filter(|c| !c.is_control()).collect::<String>();
+
+                        if !text.is_empty() {
                             let mut editor = Editor::new(&mut self.value, &mut state.cursor);
 
-                            editor.insert(c);
+                            editor.insert(text.as_str());
 
                             let message = (on_input)(editor.contents());
                             shell.publish(message);
@@ -1309,14 +1322,23 @@ where
             Status::Active
         };
 
-        if let Event::Window(window::Event::RedrawRequested(_now)) = event {
-            self.last_status = Some(status);
-        } else if self
+        let new_name = status_name(status);
+        let old_name = self.last_status.map(status_name);
+        if old_name != Some(new_name)
+            && let Some(ref on_status_change) = self.on_status_change
+        {
+            shell.publish(on_status_change(new_name));
+        }
+
+        if (self
             .last_status
             .is_some_and(|last_status| status != last_status)
+            || self.last_status.is_none())
+            && !matches!(event, Event::Window(window::Event::RedrawRequested(_)))
         {
             shell.request_redraw();
         }
+        self.last_status = Some(status);
     }
 
     fn draw(
@@ -1639,6 +1661,15 @@ pub enum Status {
     },
     /// The [`TextInput`] cannot be interacted with.
     Disabled,
+}
+
+fn status_name(status: Status) -> &'static str {
+    match status {
+        Status::Active => "active",
+        Status::Hovered => "hovered",
+        Status::Focused { .. } => "focused",
+        Status::Disabled => "disabled",
+    }
 }
 
 /// The appearance of a text input.
