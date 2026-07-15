@@ -3,6 +3,8 @@ pub mod cache;
 pub mod editor;
 pub mod paragraph;
 
+mod platform_fonts;
+
 pub use cache::Cache;
 pub use editor::Editor;
 pub use paragraph::Paragraph;
@@ -120,19 +122,46 @@ pub fn font_system() -> &'static RwLock<FontSystem> {
     static FONT_SYSTEM: OnceLock<RwLock<FontSystem>> = OnceLock::new();
 
     FONT_SYSTEM.get_or_init(|| {
-        #[allow(unused_mut)]
-        let mut raw = cosmic_text::FontSystem::new_with_fonts([
-            cosmic_text::fontdb::Source::Binary(Arc::new(
-                include_bytes!("../fonts/Iced-Icons.ttf").as_slice(),
-            )),
-            #[cfg(feature = "fira-sans")]
-            cosmic_text::fontdb::Source::Binary(Arc::new(
-                include_bytes!("../fonts/FiraSans-Regular.ttf").as_slice(),
-            )),
-        ]);
+        let mut db = cosmic_text::fontdb::Database::new();
+
+        // Avoid `fontdb::Database::load_system_fonts()`'s full parse of
+        // every installed font (which can take seconds, far more on a cold
+        // disk cache -- see https://github.com/iced-rs/iced/issues/2455).
+        // We only ever need one platform default UI font; try loading just
+        // that directly, and only fall back to the full scan if it's not
+        // where we expect it to be.
+        if !platform_fonts::load_platform_ui_fonts(&mut db) {
+            log::warn!(
+                "Expected UI font(s) not found in standard locations, \
+                 falling back to a full system font scan"
+            );
+            db.load_system_fonts();
+        }
+
+        // Mirrors `cosmic_text::FontSystem::new_with_fonts()`'s own defaults.
+        db.set_monospace_family("Noto Sans Mono");
+        db.set_sans_serif_family("Open Sans");
+        db.set_serif_family("DejaVu Serif");
+
+        let _ = db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(
+            include_bytes!("../fonts/Iced-Icons.ttf").as_slice(),
+        )));
 
         #[cfg(feature = "fira-sans")]
-        raw.db_mut().set_sans_serif_family("Fira Sans");
+        {
+            let _ = db.load_font_source(cosmic_text::fontdb::Source::Binary(Arc::new(
+                include_bytes!("../fonts/FiraSans-Regular.ttf").as_slice(),
+            )));
+            db.set_sans_serif_family("Fira Sans");
+        }
+
+        // Mirrors cosmic-text's own private `FontSystem::get_locale()`.
+        let locale = sys_locale::get_locale().unwrap_or_else(|| {
+            log::warn!("failed to get system locale, falling back to en-US");
+            String::from("en-US")
+        });
+
+        let raw = cosmic_text::FontSystem::new_with_locale_and_db(locale, db);
 
         RwLock::new(FontSystem {
             raw,
