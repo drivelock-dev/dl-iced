@@ -27,6 +27,7 @@ use crate::core::mouse;
 use crate::core::overlay;
 use crate::core::renderer;
 use crate::core::theme;
+use crate::core::widget::operation::accessible::{Accessible, Role};
 use crate::core::widget::tree::{self, Tree};
 use crate::core::widget::{self, Operation};
 use crate::core::{
@@ -71,6 +72,8 @@ where
     clip: bool,
     content: Element<'a, Message, Theme, Renderer>,
     class: Theme::Class<'a>,
+    accessible_label: Option<String>,
+    accessible_role: Role,
 }
 
 impl<'a, Message, Theme, Renderer> Container<'a, Message, Theme, Renderer>
@@ -95,12 +98,36 @@ where
             clip: false,
             class: Theme::default(),
             content,
+            accessible_label: None,
+            accessible_role: Role::Group,
         }
     }
 
     /// Sets the [`widget::Id`] of the [`Container`].
     pub fn id(mut self, id: impl Into<widget::Id>) -> Self {
         self.id = Some(id.into());
+        self
+    }
+
+    /// Sets the accessible label for the [`Container`].
+    ///
+    /// When set, the [`Container`] is exposed to assistive technology as a
+    /// named node (see [`Container::role`] for the role, which defaults to
+    /// [`Role::Group`]) instead of an anonymous layout container. Use this
+    /// for titled sections/cards so screen readers announce the section
+    /// name, instead of only exposing the title as a disconnected text
+    /// node.
+    pub fn label(mut self, label: impl Into<String>) -> Self {
+        self.accessible_label = Some(label.into());
+        self
+    }
+
+    /// Sets the accessible role for the [`Container`].
+    ///
+    /// Only takes effect when [`Container::label`] is also set. Defaults to
+    /// [`Role::Group`].
+    pub fn role(mut self, role: Role) -> Self {
+        self.accessible_role = role;
         self
     }
 
@@ -269,7 +296,19 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        operation.container(self.id.as_ref(), layout.bounds());
+        if let Some(label) = self.accessible_label.as_deref() {
+            operation.accessible(
+                self.id.as_ref(),
+                layout.bounds(),
+                &Accessible {
+                    role: self.accessible_role,
+                    label: Some(label),
+                    ..Accessible::default()
+                },
+            );
+        } else {
+            operation.container(self.id.as_ref(), layout.bounds());
+        }
         operation.traverse(&mut |operation| {
             self.content.as_widget_mut().operate(
                 tree,

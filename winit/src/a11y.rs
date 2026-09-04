@@ -2728,4 +2728,82 @@ mod tests {
         // No intermediate node -- just root + 2 children
         assert_eq!(tree.update.nodes.len(), 3);
     }
+
+    #[test]
+    fn labelled_container_exposes_group_name_and_content() {
+        // Reproduces DLUserDlg's `card_view` structure after wiring up
+        // `Container::label`/`Container::role`:
+        //
+        // container(...).label("Locked apps").role(Role::Group)  <- accessible() (Group, labelled)
+        //   column![
+        //     row![ icon, header_content ],
+        //     content                                              <- e.g. a Button
+        //   ]
+        //
+        // The card's title is now the accessible name of the outer
+        // container itself (a named Group), in addition to still being
+        // rendered visually as a child Text node. This means a screen
+        // reader announces "Locked apps, group" when focus enters the
+        // card, rather than depending solely on stumbling onto a
+        // disconnected Label node via manual object navigation.
+        let mut builder = TreeBuilder::new("Test Window");
+
+        // outer container with an accessible label/role, as Container::operate()
+        // now emits when `.label()` is set.
+        builder.accessible(
+            None,
+            UNIT,
+            &Accessible {
+                role: IcedRole::Group,
+                label: Some("Locked apps"),
+                ..Accessible::default()
+            },
+        );
+        builder.traverse(&mut |op| {
+            // column
+            op.container(None, UNIT);
+            op.traverse(&mut |op| {
+                // row (icon + header content)
+                op.container(None, UNIT);
+                op.traverse(&mut |op| {
+                    op.text(None, UNIT, "\u{f1f8}");
+                });
+
+                // content, e.g. a button inside the card
+                op.accessible(
+                    None,
+                    UNIT,
+                    &Accessible {
+                        role: IcedRole::Button,
+                        label: Some("Unlock apps"),
+                        ..Accessible::default()
+                    },
+                );
+            });
+        });
+
+        let tree = builder.build();
+
+        let group_node = tree
+            .update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == Role::Group);
+        assert_eq!(
+            group_node.map(|(_, n)| n.label()),
+            Some(Some("Locked apps")),
+            "the container should be exposed as a Group named after the card title"
+        );
+
+        let button_node = tree
+            .update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == Role::Button);
+        assert_eq!(
+            button_node.map(|(_, n)| n.label()),
+            Some(Some("Unlock apps")),
+            "content inside the labelled container should still be reachable"
+        );
+    }
 }
