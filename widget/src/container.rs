@@ -27,7 +27,7 @@ use crate::core::mouse;
 use crate::core::overlay;
 use crate::core::renderer;
 use crate::core::theme;
-use crate::core::widget::operation::accessible::{Accessible, Role};
+use crate::core::widget::operation::accessible::{Accessible, Live, Role};
 use crate::core::widget::tree::{self, Tree};
 use crate::core::widget::{self, Operation};
 use crate::core::{
@@ -74,6 +74,7 @@ where
     class: Theme::Class<'a>,
     accessible_label: Option<String>,
     accessible_role: Role,
+    accessible_live: Option<Live>,
 }
 
 impl<'a, Message, Theme, Renderer> Container<'a, Message, Theme, Renderer>
@@ -100,6 +101,7 @@ where
             content,
             accessible_label: None,
             accessible_role: Role::Group,
+            accessible_live: None,
         }
     }
 
@@ -128,6 +130,20 @@ where
     /// [`Role::Group`].
     pub fn role(mut self, role: Role) -> Self {
         self.accessible_role = role;
+        self
+    }
+
+    /// Marks the [`Container`] as a live region with the given politeness.
+    ///
+    /// Only takes effect when [`Container::label`] is also set. Whenever the
+    /// container's label changes between renders (e.g. a wizard page's
+    /// heading text), assistive technology is notified as if the new label
+    /// were freshly announced, without requiring the container to gain
+    /// focus. Use this for persistent containers whose label changes over
+    /// time and that have no focusable descendant of their own to anchor a
+    /// focus-based announcement to.
+    pub fn live(mut self, live: Live) -> Self {
+        self.accessible_live = Some(live);
         self
     }
 
@@ -303,6 +319,7 @@ where
                 &Accessible {
                     role: self.accessible_role,
                     label: Some(label),
+                    live: self.accessible_live,
                     ..Accessible::default()
                 },
             );
