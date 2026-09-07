@@ -1321,6 +1321,12 @@ async fn run_instance<P>(
                                         )
                                     {
                                         window.raw.request_redraw();
+
+                                        #[cfg(feature = "a11y")]
+                                        {
+                                            a11y_tree_dirty = true;
+                                        }
+
                                         continue;
                                     }
 
@@ -1351,6 +1357,12 @@ async fn run_instance<P>(
                                             )),
                                         ));
                                         window.raw.request_redraw();
+
+                                        #[cfg(feature = "a11y")]
+                                        {
+                                            a11y_tree_dirty = true;
+                                        }
+
                                         continue;
                                     }
                                 }
