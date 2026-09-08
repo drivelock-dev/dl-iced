@@ -1498,6 +1498,43 @@ mod tests {
     }
 
     #[test]
+    fn radio_button_uses_toggled_for_selection_state() {
+        // `widget::radio::Radio::operate()` reports its selection state
+        // via `Accessible::toggled` (not `selected`) -- per the ARIA
+        // Core-AAM spec, `radio`/`menuitemradio` expose their checked
+        // state through `aria-checked`, and `accesskit_windows` derives
+        // UIA's `SelectionItemIsSelectedPropertyId` for these roles from
+        // `toggled`, ignoring `selected` entirely. Setting only `selected`
+        // (the previous, incorrect behavior) left radio buttons with no
+        // selection state reaching Narrator/NVDA at all.
+        let mut builder = TreeBuilder::new("Test Window");
+        builder.accessible(
+            None,
+            UNIT,
+            &Accessible {
+                role: IcedRole::RadioButton,
+                label: Some("Option A"),
+                toggled: Some(true),
+                ..Accessible::default()
+            },
+        );
+
+        let tree = builder.build();
+        let node = &tree.update.nodes[1].1;
+
+        assert_eq!(node.role(), Role::RadioButton);
+        assert_eq!(node.toggled(), Some(Toggled::True));
+        assert_eq!(
+            node.is_selected(),
+            None,
+            "radio buttons should not set the `selected` accesskit state, \
+             since accesskit_windows ignores it for this role and reading \
+             it as `is_selected()` here would mask a regression back to \
+             the old (broken) `selected`-only behavior"
+        );
+    }
+
+    #[test]
     fn explicit_label_preserved_with_different_text_child() {
         let mut builder = TreeBuilder::new("Test Window");
 

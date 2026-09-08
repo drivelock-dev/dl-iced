@@ -369,7 +369,16 @@ where
             &Accessible {
                 role: Role::RadioButton,
                 label: Some(&self.label),
-                selected: Some(self.is_selected),
+                // Per the ARIA Core-AAM spec, the checked/selected state of
+                // a `radio`/`menuitemradio` role comes from `aria-checked`
+                // (accesskit's `toggled`), not `aria-selected` (`selected`).
+                // `accesskit_windows` derives UIA's
+                // `SelectionItemIsSelectedPropertyId` for these roles from
+                // `toggled` and ignores `selected` entirely -- setting only
+                // `selected` here left every radio button's selection state
+                // unannounced by screen readers (see
+                // `radio_button_uses_toggled_for_selection_state`).
+                toggled: Some(self.is_selected),
                 ..Accessible::default()
             },
         );
