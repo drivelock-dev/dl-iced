@@ -364,6 +364,16 @@ pub struct TreeBuilder {
     parent_stack: Vec<NodeId>,
     current_accessible: Option<NodeId>,
     focused: Option<NodeId>,
+    /// The first node marked as a [`Live`] region encountered while
+    /// walking the widget tree this frame, if any.
+    ///
+    /// Used as a fallback in [`build`](Self::build) when nothing in
+    /// this frame's widget tree reports itself as focused, so the
+    /// reported focus lands on the live region instead of the root
+    /// window -- which makes Narrator announce it as a normal
+    /// focus-change, rather than depending on its (unreliable) live
+    /// region handling coinciding with no other focus event firing.
+    first_live_region: Option<NodeId>,
     announcements: Vec<(String, Live)>,
     scroll_offset: Vector,
     /// Pending `labelled_by` cross-node relationships to resolve in `build()`.
@@ -396,6 +406,7 @@ impl TreeBuilder {
             parent_stack: vec![ROOT_ID],
             current_accessible: None,
             focused: None,
+            first_live_region: None,
             announcements: Vec::new(),
             scroll_offset: Vector::ZERO,
             label_refs: Vec::new(),
@@ -543,7 +554,29 @@ impl TreeBuilder {
             }
         }
 
-        let focus = self.focused.unwrap_or(ROOT_ID);
+        // Prefer this frame's resolved focus. If nothing reports
+        // itself as focused this frame, fall back to the first live
+        // region encountered while walking the tree (so Narrator
+        // announces it via the normal focus-change path), otherwise
+        // fall back further to the root window as before.
+        let focus = self.focused.or(self.first_live_region).unwrap_or(ROOT_ID);
+
+        // When the live region is only being used as a synthetic focus
+        // target (because nothing else was genuinely focused), strip
+        // its `Live` marking for this frame. Otherwise AT that acts on
+        // both signals (e.g. NVDA) would announce it twice: once for
+        // `LiveRegionChanged`, once for the focus change. The focus
+        // change alone is enough to have it announced. When something
+        // else is genuinely focused, the live region keeps its `Live`
+        // marking and is announced via the normal live-region path, as
+        // before (that case doesn't coincide with a focus change on
+        // this node, so there is nothing to double up with).
+        if self.focused.is_none()
+            && let Some(live_region_id) = self.first_live_region
+            && let Some((_, node)) = self.nodes.iter_mut().find(|(id, _)| *id == live_region_id)
+        {
+            node.clear_live();
+        }
 
         A11yTree {
             update: TreeUpdate {
@@ -645,6 +678,9 @@ impl Operation for TreeBuilder {
                 IcedLive::Polite => Live::Polite,
                 IcedLive::Assertive => Live::Assertive,
             });
+            if self.first_live_region.is_none() {
+                self.first_live_region = Some(node_id);
+            }
         }
         if accessible.required {
             node.set_required();
@@ -1371,6 +1407,12 @@ mod tests {
                 ..Accessible::default()
             },
         );
+        // Mark it genuinely focused so `build()`'s live-region-as-
+        // synthetic-focus-target fallback doesn't strip the `Live`
+        // marking being asserted below (that stripping only applies
+        // when nothing is genuinely focused; see the `live_region_*`
+        // and `genuine_focus_wins_over_live_region` tests).
+        builder.focusable(None, UNIT, &mut MockFocusable(true));
 
         let tree = builder.build();
         let node = &tree.update.nodes[1].1;
@@ -1635,6 +1677,124 @@ mod tests {
 
         assert!(tree.focused.is_none());
         assert_eq!(tree.update.focus, NodeId(0));
+    }
+
+    #[test]
+    fn live_region_used_as_focus_fallback_when_nothing_focused() {
+        // Nothing in the tree reports itself as focused, but there is
+        // a live-region node -- it should be reported as focused so
+        // Narrator announces it via the normal focus-change path.
+        let mut builder = TreeBuilder::new("Test Window");
+        builder.accessible(
+            None,
+            UNIT,
+            &Accessible {
+                role: IcedRole::Group,
+                label: Some("Heading"),
+                live: Some(IcedLive::Polite),
+                ..Accessible::default()
+            },
+        );
+
+        let tree = builder.build();
+        let live_region_id = tree.update.nodes[1].0;
+
+        assert!(
+            tree.focused.is_none(),
+            "nothing should report itself as genuinely focused"
+        );
+        assert_eq!(tree.update.focus, live_region_id);
+
+        let live_region_node = tree
+            .update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == live_region_id)
+            .map(|(_, node)| node)
+            .unwrap();
+        assert!(
+            live_region_node.live().is_none(),
+            "Live marking should be stripped when the node is only used as a \
+             synthetic focus target, so AT (e.g. NVDA) doesn't announce it twice \
+             (once for the focus change, once for LiveRegionChanged)"
+        );
+    }
+
+    #[test]
+    fn genuine_focus_wins_over_live_region() {
+        // A live region is present, but something else is genuinely
+        // focused -- the real focus must take priority.
+        let mut builder = TreeBuilder::new("Test Window");
+        builder.accessible(
+            None,
+            UNIT,
+            &Accessible {
+                role: IcedRole::Group,
+                label: Some("Heading"),
+                live: Some(IcedLive::Polite),
+                ..Accessible::default()
+            },
+        );
+        builder.accessible(
+            None,
+            UNIT,
+            &Accessible {
+                role: IcedRole::TextInput,
+                ..Accessible::default()
+            },
+        );
+        builder.focusable(None, UNIT, &mut MockFocusable(true));
+
+        let tree = builder.build();
+        let input_id = tree.update.nodes[2].0;
+        let live_region_id = tree.update.nodes[1].0;
+
+        assert_eq!(tree.focused, Some(input_id));
+        assert_eq!(tree.update.focus, input_id);
+
+        let live_region_node = tree
+            .update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == live_region_id)
+            .map(|(_, node)| node)
+            .unwrap();
+        assert_eq!(
+            live_region_node.live(),
+            Some(Live::Polite),
+            "Live marking must be kept when something else is genuinely \
+             focused, so it's still announced via the normal live-region path"
+        );
+    }
+
+    #[test]
+    fn first_live_region_wins_when_multiple_present() {
+        let mut builder = TreeBuilder::new("Test Window");
+        builder.accessible(
+            None,
+            UNIT,
+            &Accessible {
+                role: IcedRole::Group,
+                label: Some("First"),
+                live: Some(IcedLive::Polite),
+                ..Accessible::default()
+            },
+        );
+        builder.accessible(
+            None,
+            UNIT,
+            &Accessible {
+                role: IcedRole::Group,
+                label: Some("Second"),
+                live: Some(IcedLive::Polite),
+                ..Accessible::default()
+            },
+        );
+
+        let tree = builder.build();
+        let first_live_region_id = tree.update.nodes[1].0;
+
+        assert_eq!(tree.update.focus, first_live_region_id);
     }
 
     #[test]
